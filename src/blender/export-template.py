@@ -43,6 +43,68 @@ def list_editor_meshes():
     return meshes
 
 
+def resolve_image_path(image):
+    try:
+        raw_path = image.filepath_from_user()
+    except Exception:
+        raw_path = image.filepath or image.filepath_raw or ""
+
+    if not raw_path:
+        return None
+
+    try:
+        absolute = bpy.path.abspath(raw_path)
+    except Exception:
+        absolute = raw_path
+
+    return str(Path(absolute))
+
+
+def collect_image_diagnostics():
+    diagnostics = []
+
+    for image in bpy.data.images:
+        packed = bool(getattr(image, "packed_file", None))
+        source = getattr(image, "source", "UNKNOWN")
+        resolved_path = resolve_image_path(image)
+        exists = packed or (bool(resolved_path) and Path(resolved_path).exists())
+        diagnostics.append(
+            {
+                "name": image.name,
+                "source": source,
+                "packed": packed,
+                "path": resolved_path,
+                "exists": bool(exists),
+                "width": int(image.size[0]) if image.size else 0,
+                "height": int(image.size[1]) if image.size else 0,
+            }
+        )
+
+    return diagnostics
+
+
+def validate_images_for_export():
+    diagnostics = collect_image_diagnostics()
+    missing = [
+        item
+        for item in diagnostics
+        if item["source"] == "FILE" and not item["packed"] and not item["exists"]
+    ]
+
+    if missing:
+        preview = "\n".join(
+            f'- {item["name"]}: {item["path"] or "(경로 없음)"}'
+            for item in missing[:10]
+        )
+        raise RuntimeError(
+            "Blend file references external texture files that are not included in the upload.\n"
+            "현재 업로드 방식은 .blend 단일 파일만 전송하므로, 텍스처는 Blender에서 Pack Resources 한 뒤 업로드해야 합니다.\n"
+            f"Missing textures ({len(missing)}):\n{preview}"
+        )
+
+    return diagnostics
+
+
 def max_texture_size():
     size = 0
     for image in bpy.data.images:
@@ -80,12 +142,14 @@ def export_gltf(output_dir, includes_animation):
 
 
 def write_manifest(output_dir):
+    image_diagnostics = collect_image_diagnostics()
     manifest_path = Path(output_dir) / "mesh-manifest.json"
     manifest_path.write_text(
         json.dumps(
             {
                 "maxTextureSize": max_texture_size(),
                 "meshes": list_editor_meshes(),
+                "images": image_diagnostics,
             },
             ensure_ascii=False,
             indent=2,
@@ -102,6 +166,7 @@ def main():
         write_manifest(output_dir)
         return
 
+    validate_images_for_export()
     resize_images(args.texture_size)
     export_gltf(output_dir, args.includes_animation.lower() == "true")
     write_manifest(output_dir)
