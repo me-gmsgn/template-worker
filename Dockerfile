@@ -2,6 +2,7 @@ FROM node:22-bookworm
 
 ARG BLENDER_VERSION=5.1.1
 ARG BLENDER_SERIES=5.1
+ARG KTX_VERSION=4.4.2
 
 WORKDIR /app
 
@@ -37,6 +38,12 @@ RUN curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/bl
 	&& tar -xJf /tmp/blender.tar.xz -C /opt \
 	&& ln -s "/opt/blender-${BLENDER_VERSION}-linux-x64/blender" /usr/local/bin/blender \
 	&& rm -f /tmp/blender.tar.xz
+
+RUN curl -fsSL "https://github.com/KhronosGroup/KTX-Software/releases/download/v${KTX_VERSION}/KTX-Software-${KTX_VERSION}-Linux-x86_64.deb" -o /tmp/ktx.deb \
+	&& apt-get update \
+	&& apt-get install -y /tmp/ktx.deb \
+	&& rm -f /tmp/ktx.deb \
+	&& rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g @gltf-transform/cli pnpm
 
