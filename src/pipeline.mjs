@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readdir, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -239,6 +239,74 @@ function summarizeRelativePaths(files) {
 	return files.map((file) => file.relativePath).join(', ');
 }
 
+function cloneJson(value) {
+	return JSON.parse(JSON.stringify(value));
+}
+
+function mergeUniqueStrings(left = [], right = []) {
+	return [...new Set([...(left ?? []), ...(right ?? [])])];
+}
+
+async function copyFilesRecursively(rootDir, targetDir, predicate) {
+	const files = await collectFilesRecursively(rootDir);
+
+	for (const file of files) {
+		if (!predicate(file)) continue;
+		const targetPath = path.join(targetDir, file.relativePath);
+		await mkdir(path.dirname(targetPath), { recursive: true });
+		await copyFile(file.absolutePath, targetPath);
+	}
+}
+
+async function buildAnimatedVariantFromStaticCompression({
+	staticCompressedDir,
+	staticCompressedModelPath,
+	animatedRawDir,
+	animatedRawModelPath,
+	animatedFinalDir
+}) {
+	const [staticCompressedRaw, animatedRaw] = await Promise.all([
+		readFile(staticCompressedModelPath, 'utf8'),
+		readFile(animatedRawModelPath, 'utf8')
+	]);
+	const staticCompressed = JSON.parse(staticCompressedRaw);
+	const animated = JSON.parse(animatedRaw);
+	const merged = cloneJson(animated);
+
+	merged.extensionsUsed = mergeUniqueStrings(animated.extensionsUsed, staticCompressed.extensionsUsed);
+	merged.extensionsRequired = mergeUniqueStrings(
+		animated.extensionsRequired,
+		staticCompressed.extensionsRequired
+	);
+
+	if (staticCompressed.extensions !== undefined) {
+		merged.extensions = staticCompressed.extensions;
+	}
+
+	for (const key of ['samplers', 'images', 'textures', 'materials']) {
+		if (staticCompressed[key] !== undefined) {
+			merged[key] = staticCompressed[key];
+		}
+	}
+
+	await mkdir(animatedFinalDir, { recursive: true });
+	await copyFilesRecursively(
+		animatedRawDir,
+		animatedFinalDir,
+		(file) => !file.relativePath.endsWith('.gltf') && !isTextureLikeFile(file.relativePath)
+	);
+	await copyFilesRecursively(
+		staticCompressedDir,
+		animatedFinalDir,
+		(file) => isTextureLikeFile(file.relativePath)
+	);
+	await writeFile(
+		path.join(animatedFinalDir, 'model.gltf'),
+		JSON.stringify(merged, null, 2),
+		'utf8'
+	);
+}
+
 async function uploadAssetDirectory(templateId, assetSetKey, directory) {
 	const files = await collectFilesRecursively(directory);
 	const uploaded = [];
@@ -419,30 +487,43 @@ export async function processTemplateUpload({ templateId, sourceBlendStorageKey 
 			availableTextureSizes.includes(item.textureSize)
 		)) {
 			const exportRoot = path.join(tempRoot, profile.key);
-			const resizedPath = path.join(exportRoot, 'resized.gltf');
 			const finalDir = path.join(exportRoot, 'final');
-			const finalModelPath = path.join(finalDir, 'model.gltf');
-			const masterExport = masterExports.get(profile.includesAnimation ? 'animated' : 'static');
+			const staticMasterExport = masterExports.get('static');
+			const animatedMasterExport = masterExports.get('animated');
 
-			if (!masterExport) {
+			if (!staticMasterExport || !animatedMasterExport) {
 				throw new Error(
-					`Missing ${profile.includesAnimation ? 'animated' : 'static'} master export for ${profile.key}.`
+					`Missing master export for ${profile.key}.`
 				);
 			}
 
 			await mkdir(finalDir, { recursive: true });
-			await runGltfTransformResize(masterExport.rawModelPath, resizedPath, profile.textureSize);
-			await runGltfTransformKtx2(resizedPath, finalModelPath);
-			const finalFiles = await collectFilesRecursively(finalDir);
-			const finalTextureFiles = finalFiles.filter((file) => isTextureLikeFile(file.relativePath));
-			if (masterExport.rawTextureFiles.length > 0 && finalTextureFiles.length === 0) {
-				throw new Error(
-					[
-						`gltf-transform removed all texture outputs for ${profile.key}.`,
-						`raw files=[${summarizeRelativePaths(masterExport.rawFiles)}]`,
-						`final files=[${summarizeRelativePaths(finalFiles)}]`
-					].join('\n')
-				);
+			if (profile.includesAnimation) {
+				const staticProfileFinalDir = path.join(tempRoot, profile.qualityKey, 'final');
+				const staticProfileModelPath = path.join(staticProfileFinalDir, 'model.gltf');
+				await buildAnimatedVariantFromStaticCompression({
+					staticCompressedDir: staticProfileFinalDir,
+					staticCompressedModelPath: staticProfileModelPath,
+					animatedRawDir: animatedMasterExport.rawDir,
+					animatedRawModelPath: animatedMasterExport.rawModelPath,
+					animatedFinalDir: finalDir
+				});
+			} else {
+				const resizedPath = path.join(exportRoot, 'resized.gltf');
+				const finalModelPath = path.join(finalDir, 'model.gltf');
+				await runGltfTransformResize(staticMasterExport.rawModelPath, resizedPath, profile.textureSize);
+				await runGltfTransformKtx2(resizedPath, finalModelPath);
+				const finalFiles = await collectFilesRecursively(finalDir);
+				const finalTextureFiles = finalFiles.filter((file) => isTextureLikeFile(file.relativePath));
+				if (staticMasterExport.rawTextureFiles.length > 0 && finalTextureFiles.length === 0) {
+					throw new Error(
+						[
+							`gltf-transform removed all texture outputs for ${profile.key}.`,
+							`raw files=[${summarizeRelativePaths(staticMasterExport.rawFiles)}]`,
+							`final files=[${summarizeRelativePaths(finalFiles)}]`
+						].join('\n')
+					);
+				}
 			}
 
 			const files = await uploadAssetDirectory(templateId, profile.key, finalDir);
