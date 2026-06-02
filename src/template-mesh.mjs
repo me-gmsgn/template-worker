@@ -2,7 +2,7 @@ function sanitizeMeshLabel(value) {
 	return value
 		.replace(/^\s*-?\d+\s*/, '')
 		.replace(/\{[^}]*\}/g, ' ')
-		.replace(/editable|drawable/gi, ' ')
+		.replace(/editable|drawable|texture|color/gi, ' ')
 		.replace(/[_-]+/g, ' ')
 		.replace(/[^\p{L}\p{N}\s]/gu, ' ')
 		.trim()
@@ -26,11 +26,22 @@ function extractColorBindingKey(value) {
 	return null;
 }
 
+function extractTextureBindingKey(value) {
+	const matches = [...value.matchAll(/\{([^}]+)\}/g)];
+	for (const match of matches) {
+		const token = match[1]?.trim() ?? '';
+		if (!token.toLowerCase().startsWith('texture')) continue;
+		return token;
+	}
+	return null;
+}
+
 export function parseTemplateMesh(meshKey) {
 	const lower = meshKey.toLowerCase();
 	const isDrawable = lower.includes('drawable');
 	const isEditable = lower.includes('editable') || isDrawable;
 	const colorBindingKey = extractColorBindingKey(meshKey);
+	const textureBindingKey = extractTextureBindingKey(meshKey);
 
 	return {
 		meshKey,
@@ -44,7 +55,7 @@ export function parseTemplateMesh(meshKey) {
 				: 'material_base_color'
 			: 'none',
 		colorBindingKey,
-		materialSlotKey: null
+		materialSlotKey: textureBindingKey
 	};
 }
 
