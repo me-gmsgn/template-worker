@@ -57,6 +57,17 @@ const EXPORT_PROFILES = [
 	}
 ];
 
+const MASTER_EXPORTS = [
+	{
+		key: 'static-master',
+		includesAnimation: false
+	},
+	{
+		key: 'animated-master',
+		includesAnimation: true
+	}
+];
+
 const ROLE_PATTERNS = [
 	{ role: 'model', pattern: /\.gltf$/i },
 	{ role: 'base_color', pattern: /(basecolor|base_color|albedo|diffuse)/i },
@@ -255,6 +266,47 @@ function normalizeAvailableTextureSizes(maxTextureSize) {
 	return baseSizes;
 }
 
+async function exportMasterSet({
+	resolvedBlendPath,
+	tempRoot,
+	textureSize,
+	includesAnimation,
+	inspectManifest
+}) {
+	const masterKey = includesAnimation ? 'animated-master' : 'static-master';
+	const exportRoot = path.join(tempRoot, masterKey);
+	const rawDir = path.join(exportRoot, 'raw');
+	const rawModelPath = path.join(rawDir, 'model.gltf');
+
+	await mkdir(rawDir, { recursive: true });
+	await runBlenderScript('export', resolvedBlendPath, rawDir, textureSize, includesAnimation);
+
+	const rawFiles = await collectFilesRecursively(rawDir);
+	const rawTextureFiles = rawFiles.filter((file) => isTextureLikeFile(file.relativePath));
+	const hasSourceImages = Array.isArray(inspectManifest.images) && inspectManifest.images.length > 0;
+
+	if (hasSourceImages && rawTextureFiles.length === 0) {
+		throw new Error(
+			[
+				`Blender exported ${masterKey} without any texture files.`,
+				`source images=${inspectManifest.images.length}`,
+				`raw files=[${summarizeRelativePaths(rawFiles)}]`,
+				'이 .blend는 로컬에서는 텍스처가 나오는데 worker export에서는 텍스처가 생성되지 않았습니다.',
+				'현재 원인은 headless 자체보다는 Blender export 옵션 또는 머티리얼/glTF exporter 호환성일 가능성이 큽니다.'
+			].join('\n')
+		);
+	}
+
+	return {
+		key: masterKey,
+		includesAnimation,
+		rawDir,
+		rawModelPath,
+		rawFiles,
+		rawTextureFiles
+	};
+}
+
 function normalizeEditorMeshes(rawMeshes) {
 	return sortTemplateMeshes(
 		(rawMeshes ?? []).map((mesh) => {
@@ -349,49 +401,45 @@ export async function processTemplateUpload({ templateId, sourceBlendStorageKey 
 		const availableTextureSizes = normalizeAvailableTextureSizes(inspectManifest.maxTextureSize);
 		const editorMeshes = normalizeEditorMeshes(inspectManifest.meshes);
 		const assetSets = [];
+		const masterTextureSize = Math.max(...availableTextureSizes);
+		const masterExports = new Map();
+
+		for (const masterExport of MASTER_EXPORTS) {
+			const result = await exportMasterSet({
+				resolvedBlendPath,
+				tempRoot,
+				textureSize: masterTextureSize,
+				includesAnimation: masterExport.includesAnimation,
+				inspectManifest
+			});
+			masterExports.set(masterExport.includesAnimation ? 'animated' : 'static', result);
+		}
 
 		for (const profile of EXPORT_PROFILES.filter((item) =>
 			availableTextureSizes.includes(item.textureSize)
 		)) {
 			const exportRoot = path.join(tempRoot, profile.key);
-			const rawDir = path.join(exportRoot, 'raw');
 			const resizedPath = path.join(exportRoot, 'resized.gltf');
 			const finalDir = path.join(exportRoot, 'final');
-			const rawModelPath = path.join(rawDir, 'model.gltf');
 			const finalModelPath = path.join(finalDir, 'model.gltf');
+			const masterExport = masterExports.get(profile.includesAnimation ? 'animated' : 'static');
 
-			await mkdir(rawDir, { recursive: true });
-			await mkdir(finalDir, { recursive: true });
-			await runBlenderScript(
-				'export',
-				resolvedBlendPath,
-				rawDir,
-				profile.textureSize,
-				profile.includesAnimation
-			);
-			const rawFiles = await collectFilesRecursively(rawDir);
-			const rawTextureFiles = rawFiles.filter((file) => isTextureLikeFile(file.relativePath));
-			const hasSourceImages = Array.isArray(inspectManifest.images) && inspectManifest.images.length > 0;
-			if (hasSourceImages && rawTextureFiles.length === 0) {
+			if (!masterExport) {
 				throw new Error(
-					[
-						`Blender exported ${profile.key} without any texture files.`,
-						`source images=${inspectManifest.images.length}`,
-						`raw files=[${summarizeRelativePaths(rawFiles)}]`,
-						'이 .blend는 로컬에서는 텍스처가 나오는데 worker export에서는 텍스처가 생성되지 않았습니다.',
-						'현재 원인은 headless 자체보다는 Blender export 옵션 또는 머티리얼/glTF exporter 호환성일 가능성이 큽니다.'
-					].join('\n')
+					`Missing ${profile.includesAnimation ? 'animated' : 'static'} master export for ${profile.key}.`
 				);
 			}
-			await runGltfTransformResize(rawModelPath, resizedPath, profile.textureSize);
+
+			await mkdir(finalDir, { recursive: true });
+			await runGltfTransformResize(masterExport.rawModelPath, resizedPath, profile.textureSize);
 			await runGltfTransformKtx2(resizedPath, finalModelPath);
 			const finalFiles = await collectFilesRecursively(finalDir);
 			const finalTextureFiles = finalFiles.filter((file) => isTextureLikeFile(file.relativePath));
-			if (rawTextureFiles.length > 0 && finalTextureFiles.length === 0) {
+			if (masterExport.rawTextureFiles.length > 0 && finalTextureFiles.length === 0) {
 				throw new Error(
 					[
 						`gltf-transform removed all texture outputs for ${profile.key}.`,
-						`raw files=[${summarizeRelativePaths(rawFiles)}]`,
+						`raw files=[${summarizeRelativePaths(masterExport.rawFiles)}]`,
 						`final files=[${summarizeRelativePaths(finalFiles)}]`
 					].join('\n')
 				);
