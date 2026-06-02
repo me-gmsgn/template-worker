@@ -29,6 +29,7 @@ RUN apt-get update \
 		libxrandr2 \
 		libxrender1 \
 		libxxf86vm1 \
+		zstd \
 		xz-utils \
 	&& rm -rf /var/lib/apt/lists/*
 

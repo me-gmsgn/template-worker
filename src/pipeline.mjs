@@ -260,13 +260,55 @@ function normalizeEditorMeshes(rawMeshes) {
 	);
 }
 
-async function assertBlendFileHeader(blendPath) {
+function hasZstdHeader(fileBuffer) {
+	return (
+		fileBuffer.byteLength >= 4 &&
+		fileBuffer[0] === 0x28 &&
+		fileBuffer[1] === 0xb5 &&
+		fileBuffer[2] === 0x2f &&
+		fileBuffer[3] === 0xfd
+	);
+}
+
+function hasGzipHeader(fileBuffer) {
+	return fileBuffer.byteLength >= 2 && fileBuffer[0] === 0x1f && fileBuffer[1] === 0x8b;
+}
+
+async function decompressZstdFile(sourcePath, outputPath) {
+	await spawnCommand('zstd', ['-d', '-f', '-o', outputPath, sourcePath]);
+	return outputPath;
+}
+
+async function decompressGzipFile(sourcePath, outputPath) {
+	await spawnCommand('bash', ['-lc', `gzip -dc "${sourcePath}" > "${outputPath}"`]);
+	return outputPath;
+}
+
+async function resolveBlendFileForBlender(blendPath) {
 	const fileBuffer = await readFile(blendPath);
 	const fileSize = fileBuffer.byteLength;
 	const asciiHeader = fileBuffer.subarray(0, 16).toString('ascii');
 
 	if (asciiHeader.startsWith('BLENDER')) {
-		return;
+		return blendPath;
+	}
+
+	const decompressedBlendPath = `${blendPath}.decompressed.blend`;
+
+	if (hasZstdHeader(fileBuffer)) {
+		await decompressZstdFile(blendPath, decompressedBlendPath);
+		const decompressedBuffer = await readFile(decompressedBlendPath);
+		if (decompressedBuffer.subarray(0, 16).toString('ascii').startsWith('BLENDER')) {
+			return decompressedBlendPath;
+		}
+	}
+
+	if (hasGzipHeader(fileBuffer)) {
+		await decompressGzipFile(blendPath, decompressedBlendPath);
+		const decompressedBuffer = await readFile(decompressedBlendPath);
+		if (decompressedBuffer.subarray(0, 16).toString('ascii').startsWith('BLENDER')) {
+			return decompressedBlendPath;
+		}
 	}
 
 	const safeAsciiPreview = asciiHeader.replace(/[^\x20-\x7E]/g, '.');
@@ -291,9 +333,9 @@ export async function processTemplateUpload({ templateId, sourceBlendStorageKey 
 
 	try {
 		await downloadObjectToFile(sourceBlendStorageKey, blendPath);
-		await assertBlendFileHeader(blendPath);
+		const resolvedBlendPath = await resolveBlendFileForBlender(blendPath);
 		await mkdir(inspectDir, { recursive: true });
-		await runBlenderScript('inspect', blendPath, inspectDir);
+		await runBlenderScript('inspect', resolvedBlendPath, inspectDir);
 
 		const inspectManifest = JSON.parse(await readFile(inspectManifestPath, 'utf8'));
 		const availableTextureSizes = normalizeAvailableTextureSizes(inspectManifest.maxTextureSize);
@@ -314,7 +356,7 @@ export async function processTemplateUpload({ templateId, sourceBlendStorageKey 
 			await mkdir(finalDir, { recursive: true });
 			await runBlenderScript(
 				'export',
-				blendPath,
+				resolvedBlendPath,
 				rawDir,
 				profile.textureSize,
 				profile.includesAnimation
