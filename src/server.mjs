@@ -1,6 +1,6 @@
 import cors from 'cors';
 import express from 'express';
-import { randomUUID } from 'node:crypto';
+import { createId } from '@paralleldrive/cuid2';
 import { processTemplateUpload } from './pipeline.mjs';
 
 const app = express();
@@ -36,7 +36,7 @@ function updateJob(jobId, patch) {
 
 function scheduleTemplateUploadJob({ templateId, sourceBlendStorageKey }) {
 	const job = {
-		id: randomUUID(),
+		id: createId(),
 		status: 'queued',
 		templateId,
 		sourceBlendStorageKey,
