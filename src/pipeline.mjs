@@ -123,9 +123,19 @@ function spawnCommand(command, args, options = {}) {
 				return;
 			}
 
+			const stdoutText = stdout.trim();
+			const stderrText = stderr.trim();
+			const outputSections = [];
+			if (stdoutText) {
+				outputSections.push(`stdout:\n${stdoutText}`);
+			}
+			if (stderrText) {
+				outputSections.push(`stderr:\n${stderrText}`);
+			}
+
 			reject(
 				new Error(
-					`${command} ${args.join(' ')} failed with exit code ${code}.${stderr ? `\n${stderr}` : ''}`
+					`${command} ${args.join(' ')} failed with exit code ${code}.${outputSections.length ? `\n\n${outputSections.join('\n\n')}` : ''}`
 				)
 			);
 		});
