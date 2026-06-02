@@ -1,0 +1,27 @@
+services:
+  template-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: template-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:3011:3011"
+    networks:
+      - worker-net
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: template-worker-cloudflared
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    restart: unless-stopped
+    depends_on:
+      - template-worker
+    networks:
+      - worker-net
+
+networks:
+  worker-net:
+    driver: bridge

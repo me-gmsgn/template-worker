@@ -1,0 +1,15 @@
+{
+	"name": "@mws/template-worker",
+	"private": true,
+	"type": "module",
+	"version": "0.0.1",
+	"scripts": {
+		"dev": "node --watch ./src/server.mjs",
+		"start": "node ./src/server.mjs"
+	},
+	"dependencies": {
+		"@aws-sdk/client-s3": "^3.787.0",
+		"cors": "^2.8.5",
+		"express": "^5.2.1"
+	}
+}
