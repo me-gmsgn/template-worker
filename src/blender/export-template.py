@@ -135,7 +135,9 @@ def export_gltf(output_dir, includes_animation):
         export_draco_mesh_compression_enable=False,
         export_animations=includes_animation,
         export_optimize_animation_size=False,
-        export_keep_originals=True,
+        # Force Blender to emit texture files from packed image data instead of
+        # trying to preserve original source file references.
+        export_keep_originals=False,
         export_yup=True,
         export_image_format="AUTO",
     )

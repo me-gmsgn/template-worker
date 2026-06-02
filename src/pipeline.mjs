@@ -220,6 +220,14 @@ async function collectFilesRecursively(rootDir, currentDir = rootDir) {
 	return files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
+function isTextureLikeFile(relativePath) {
+	return /\.(png|jpe?g|webp|ktx2)$/i.test(relativePath);
+}
+
+function summarizeRelativePaths(files) {
+	return files.map((file) => file.relativePath).join(', ');
+}
+
 async function uploadAssetDirectory(templateId, assetSetKey, directory) {
 	const files = await collectFilesRecursively(directory);
 	const uploaded = [];
@@ -361,8 +369,33 @@ export async function processTemplateUpload({ templateId, sourceBlendStorageKey 
 				profile.textureSize,
 				profile.includesAnimation
 			);
+			const rawFiles = await collectFilesRecursively(rawDir);
+			const rawTextureFiles = rawFiles.filter((file) => isTextureLikeFile(file.relativePath));
+			const hasSourceImages = Array.isArray(inspectManifest.images) && inspectManifest.images.length > 0;
+			if (hasSourceImages && rawTextureFiles.length === 0) {
+				throw new Error(
+					[
+						`Blender exported ${profile.key} without any texture files.`,
+						`source images=${inspectManifest.images.length}`,
+						`raw files=[${summarizeRelativePaths(rawFiles)}]`,
+						'이 .blend는 로컬에서는 텍스처가 나오는데 worker export에서는 텍스처가 생성되지 않았습니다.',
+						'현재 원인은 headless 자체보다는 Blender export 옵션 또는 머티리얼/glTF exporter 호환성일 가능성이 큽니다.'
+					].join('\n')
+				);
+			}
 			await runGltfTransformResize(rawModelPath, resizedPath, profile.textureSize);
 			await runGltfTransformKtx2(resizedPath, finalModelPath);
+			const finalFiles = await collectFilesRecursively(finalDir);
+			const finalTextureFiles = finalFiles.filter((file) => isTextureLikeFile(file.relativePath));
+			if (rawTextureFiles.length > 0 && finalTextureFiles.length === 0) {
+				throw new Error(
+					[
+						`gltf-transform removed all texture outputs for ${profile.key}.`,
+						`raw files=[${summarizeRelativePaths(rawFiles)}]`,
+						`final files=[${summarizeRelativePaths(finalFiles)}]`
+					].join('\n')
+				);
+			}
 
 			const files = await uploadAssetDirectory(templateId, profile.key, finalDir);
 			assetSets.push({
