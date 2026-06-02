@@ -11,6 +11,7 @@ services:
       - "127.0.0.1:3011:3011"
     networks:
       - worker-net
+      - storage-net
 
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -25,3 +26,6 @@ services:
 networks:
   worker-net:
     driver: bridge
+  storage-net:
+    external: true
+    name: ${STORAGE_NETWORK_NAME:-aivar-storage_storage-net}

@@ -32,8 +32,10 @@ pnpm --filter @mws/template-worker start
 ## Docker 실행
 
 1. `.env.example`를 `.env`로 복사합니다.
-2. `CF_TUNNEL_TOKEN`을 넣고 Cloudflare tunnel 라우팅을 `template-worker`로 연결합니다.
-3. 아래처럼 실행합니다.
+2. `S3_STORAGE_ENDPOINT`는 public `s3.veer.kr`가 아니라 내부 MinIO origin(`http://minio:9000`)을 사용합니다.
+3. `STORAGE_NETWORK_NAME`에는 MinIO가 붙어 있는 Docker external network 이름을 넣습니다.
+4. `CF_TUNNEL_TOKEN`을 넣고 Cloudflare tunnel 라우팅을 `template-worker`로 연결합니다.
+5. 아래처럼 실행합니다.
 
 ```bash
 docker compose -f docker-compose.example.yml up -d
