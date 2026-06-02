@@ -260,6 +260,27 @@ function normalizeEditorMeshes(rawMeshes) {
 	);
 }
 
+async function assertBlendFileHeader(blendPath) {
+	const fileBuffer = await readFile(blendPath);
+	const fileSize = fileBuffer.byteLength;
+	const asciiHeader = fileBuffer.subarray(0, 16).toString('ascii');
+
+	if (asciiHeader.startsWith('BLENDER')) {
+		return;
+	}
+
+	const safeAsciiPreview = asciiHeader.replace(/[^\x20-\x7E]/g, '.');
+	const hexPreview = fileBuffer
+		.subarray(0, 16)
+		.toString('hex')
+		.match(/.{1,2}/g)
+		?.join(' ') ?? '';
+
+	throw new Error(
+		`Downloaded source is not a valid .blend file. size=${fileSize} bytes, ascii="${safeAsciiPreview}", hex="${hexPreview}"`
+	);
+}
+
 export async function processTemplateUpload({ templateId, sourceBlendStorageKey }) {
 	await ensureObjectExists(sourceBlendStorageKey);
 
@@ -270,6 +291,7 @@ export async function processTemplateUpload({ templateId, sourceBlendStorageKey 
 
 	try {
 		await downloadObjectToFile(sourceBlendStorageKey, blendPath);
+		await assertBlendFileHeader(blendPath);
 		await mkdir(inspectDir, { recursive: true });
 		await runBlenderScript('inspect', blendPath, inspectDir);
 
